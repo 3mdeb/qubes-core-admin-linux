@@ -213,6 +213,12 @@ qvm-run --nogui -q $UPDATEVM 'rm -rf /var/lib/qubes/dom0-updates/etc' || exit 1
 tar c /var/lib/rpm /etc/yum.repos.d /etc/yum.conf /etc/dnf/dnf.conf 2>/dev/null | \
    qvm-run --nogui -q --pass-io "$UPDATEVM" 'LC_MESSAGES=C tar x -C /var/lib/qubes/dom0-updates 2>&1 | grep -v -E "s in the future"'
 
+if [ "$FW_UPDATE" == "1" ]; then
+    qvm-run --nogui -q -u root $UPDATEVM 'mkdir -m 775 -p /var/lib/fwupd/fwupd-updates/' || exit 1
+    qvm-run --nogui -q -u root $UPDATEVM 'chown user:user /var/lib/fwupd/fwupd-updates/' || exit 1
+    echo "I've created"
+fi
+
 CMD="/usr/lib/qubes/qubes-download-dom0-updates.sh --doit --nogui $(escape_args "${ALL_OPTS[@]}")"
 # Use 'script' to fake a terminal, so that we are shown sync and download
 # progress indicators. However, do it only if we are running in terminal
