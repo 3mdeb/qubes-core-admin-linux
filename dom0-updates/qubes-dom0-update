@@ -55,6 +55,9 @@ QVMRUN_OPTS=
 CLEAN=
 TEMPLATE=
 TEMPLATE_BACKUP=
+FW_UPDATE=
+FW_HARDWARE=
+
 # Filter out some dnf options and collect packages list
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -72,6 +75,10 @@ while [ $# -gt 0 ]; do
             ;;
         --action=*)
             YUM_ACTION=${1#--action=}
+            ;;
+        --hardware=*)
+            FW_UPDATE=1
+            FW_HARDWARE=${1#--hardware=}
             ;;
         -*)
             YUM_OPTS+=( "${1}" )
@@ -214,21 +221,39 @@ if [ -t 1 ] && [ -t 2 ]; then
     CMD="script --quiet --return --command '$CMD' /dev/null"
 fi
 
-qvm-run $QVMRUN_OPTS --pass-io $UPDATEVM "$CMD" < /dev/null
+if [ "$FW_UPDATE" == "1" ]; then
+    FW_UPDATE_SCRIPT="/usr/lib/qubes/fwupd-download-updates.sh \
+        --hardware='$FW_HARDWARE'"
+    CMD="script --quiet --return --command '$FW_UPDATE_SCRIPT' /dev/null"
+    qvm-run --nogui --pass-io $UPDATEVM "$CMD"
+else
+    qvm-run $QVMRUN_OPTS --pass-io $UPDATEVM "$CMD" < /dev/null
+fi
+
 RETCODE=$?
 if [ "$REMOTE_ONLY" == "1" ]; then
     exit $RETCODE
 elif [ "$RETCODE" -ne 0 ]; then
     exit $RETCODE
 fi
+
 # Wait for download completed
-while pidof -x qubes-receive-updates >/dev/null; do sleep 0.5; done
+if [ "$FW_UPDATE" == "1" ]; then
+    :
+else
+    while pidof -x qubes-receive-updates >/dev/null; do sleep 0.5; done
+fi
 
 if [ -r /var/lib/qubes/updates/errors ]; then
     echo "*** ERROR while receiving updates:" >&2
     cat /var/lib/qubes/updates/errors >&2
     echo "--> if you want to use packages that were downloaded correctly, use dnf directly now" >&2
     exit 1
+fi
+
+# If script is used by fwupd exit the script
+if [ "$FW_UPDATE" == "1" ]; then
+    exit 0
 fi
 
 if [ -z "$YUM_ACTION" ]; then
