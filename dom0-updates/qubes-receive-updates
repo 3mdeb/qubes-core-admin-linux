@@ -34,8 +34,10 @@ updates_repodata_dir = updates_dir + "/repodata"
 updates_error_file = updates_dir + "/errors"
 
 fwupd_dir = "/var/lib/fwupd"
-fwupd_updates_dir = "/var/lib/fwupd/updates"
+fwupd_update_file_name = "sample-image.jpg"
+fwupd_updates_dir = "/var/lib/fwupd/updates/"
 fwupd_error_file = fwupd_dir + "/errors"
+fwupd_source_dir = "/var/lib/fwupd/fwupd-updates/" + fwupd_update_file_name
 
 comps_file = None
 if os.path.exists('/usr/share/qubes/Qubes-comps.xml'):
@@ -132,22 +134,25 @@ def handle_dom0updates(updatevm):
 
 def handle_fwupdupdates(updatevm):
     source = os.getenv("QREXEC_REMOTE_DOMAIN")
-    print("FILE NON VERIFIED!!!")
     if source != updatevm.name:
         print('Domain ' + str(source) + ' not allowed to send dom0 updates',
             file=sys.stderr)
         exit(1)
     if os.path.exists(fwupd_error_file):
-        shutil.rmtree(fwupd_error_file)
-    os.environ['LC_ALL'] = 'C'
+        os.remove(fwupd_error_file)
     qubes_gid = grp.getgrnam('qubes').gr_gid
     old_umask = os.umask(0o002)
     os.mkdir(fwupd_updates_dir)
     os.chown(fwupd_updates_dir, -1, qubes_gid)
     os.chmod(fwupd_updates_dir, 0o0775)
+
+    CMD = "/usr/bin/qvm-run --pass-io "
+    CMD += source
+    CMD += " 'cat %s' > " % fwupd_source_dir
+    CMD += fwupd_updates_dir + fwupd_update_file_name
+
     try:
-        subprocess.check_call(["/usr/libexec/qubes/qfile-dom0-unpacker",
-            str(os.getuid()), fwupd_updates_dir])
+        os.system(CMD)
         # Verify received files
         for untrusted_f in os.listdir(fwupd_updates_dir):
             if not fwupd_update_files_regex.match(untrusted_f):
@@ -158,12 +163,12 @@ def handle_fwupdupdates(updatevm):
         assert '\0' not in f
         assert '\x1b' not in f
 
-        full_path = updates_rpm_dir + "/" + f
+        full_path = fwupd_updates_dir + "/" + f
         if os.path.islink(full_path) or not os.path.isfile(full_path):
                 raise Exception(
                     'Domain ' + source + ' sent not regular file')
         # TO DO fwupd update files verification
-        print("FILE NON VERIFIED!!!")
+        print("FILE NOT VERIFIED!!!")
     except Exception as e:
         fwupdates_fatal(str(e))
     os.umask(old_umask)
@@ -174,8 +179,7 @@ def main():
     updatevm = app.updatevm
     if updatevm is None:
         exit(1)
-    fw = os.getenv("FW_UPDATE")
-    if fw:
+    if 1:
         handle_fwupdupdates(updatevm)
     else:
         handle_dom0updates(updatevm)
