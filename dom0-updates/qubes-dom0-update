@@ -55,7 +55,7 @@ QVMRUN_OPTS=
 CLEAN=
 TEMPLATE=
 TEMPLATE_BACKUP=
-FW_UPDATE=
+export FW_UPDATE=
 FW_HARDWARE=
 
 # Filter out some dnf options and collect packages list
@@ -229,7 +229,7 @@ fi
 
 if [ "$FW_UPDATE" == "1" ]; then
     FW_UPDATE_SCRIPT="/usr/lib/qubes/fwupd-download-updates.sh \
-        --hardware='$FW_HARDWARE'"
+        --hardware='$FW_HARDWARE' --clean"
     CMD="script --quiet --return --command '$FW_UPDATE_SCRIPT' /dev/null"
     qvm-run --nogui --pass-io $UPDATEVM "$CMD"
 else
@@ -244,16 +244,18 @@ elif [ "$RETCODE" -ne 0 ]; then
 fi
 
 # Wait for download completed
-if [ "$FW_UPDATE" == "1" ]; then
-    :
-else
-    while pidof -x qubes-receive-updates >/dev/null; do sleep 0.5; done
-fi
+while pidof -x qubes-receive-updates >/dev/null; do sleep 0.5; done
 
 if [ -r /var/lib/qubes/updates/errors ]; then
     echo "*** ERROR while receiving updates:" >&2
     cat /var/lib/qubes/updates/errors >&2
     echo "--> if you want to use packages that were downloaded correctly, use dnf directly now" >&2
+    exit 1
+fi
+
+if [ -r /var/lib/fwupd/errors ]; then
+    echo "*** ERROR while receiving fwupd updates:" >&2
+    cat /var/lib/fwupd/updates/errors >&2
     exit 1
 fi
 
