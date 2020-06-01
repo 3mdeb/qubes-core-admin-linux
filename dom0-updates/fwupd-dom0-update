@@ -1,0 +1,143 @@
+#!/bin/bash
+
+escape_args() {
+    local eargs=""
+
+    for arg in "$@"; do
+    printf -v eargs '%s%q ' "$eargs" "$arg"
+    done
+
+    echo "${eargs%?}"
+}
+
+find_regex_in_args() {
+    local regex="${1}"
+    shift 1
+
+    for arg in "${@}"; do
+        if echo "${arg}" | grep -q -e "${regex}"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+UPDATEVM=`qubes-prefs --force-root updatevm`
+FWUPD_CACHE_FILES=/home/root/.cache/fwupd
+
+#if [ -z "$UPDATEVM" ]; then
+#    echo "UpdateVM not set, exiting"
+#    exit 1
+#fi
+
+if [ "$1" = "--help" ]; then
+    echo "This tool is used to download packages for dom0. Without package list"
+    echo "it checks for updates for installed packages"
+    echo ""
+    echo "Usage: $0 [--clean] [--check-only] [--gui] [<pkg list>]"
+    echo "    --clean      clean cache before doing anything"
+    echo "    --metadata   inits metadata download"
+    echo "    --update     inits firmware update files download"
+    echo "    --url=       firmware update url"
+    echo "    --sha=       firmware upadte sha1 checksum"
+    exit
+fi
+
+CLEAN=
+METADATA=
+UPDATE=
+URL=
+SHASUM=
+
+# Filter out some dnf options and collect packages list
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --clean)
+            CLEAN=1
+            ;;
+        --metadata)
+            METADATA=1
+            ;;
+        --update)
+            METADATA=1
+            ;;
+        --url=*)
+            URL=${1#--url=}
+            ;;
+        --sha=*)
+            SHASUM=${1#--sha=}
+            ;;
+        *)
+            echo "Command unknown"
+            ;;
+    esac
+    shift
+done
+
+ID=$(id -ur)
+if [ $ID != 0 ]; then
+    echo "This script should be run as root (when used in console mode), use sudo." >&2
+    exit 1
+fi
+
+if [ "$UPDATE" == "1" ] && [ -z "$URL" || -z "$SHASUM" ]; then
+    echo "Invalid update url or checksum." >&2
+    exit 1
+fi
+
+if [ -z "$UPDATE" && -z "$METADATA" ]; then
+    echo "No option chosen. Exiting..." >&2
+    exit 1
+fi
+
+if [ -n "$CLEAN" ]; then
+    rm -f $FWUPD_CACHE_FILES/metadata/*
+    rm -f $FWUPD_CACHE_FILES/updates/*
+fi
+rm -f $FWUPD_CACHE_FILES/errors
+
+# First time configuration
+if [ -d "$FWUPD_CACHE_FILES" ]; then
+    mkdir -p $FWUPD_CACHE_FILES/metadata
+    mkdir -p $FWUPD_CACHE_FILES/updates
+    chown -R user:user $FWUPD_CACHE_FILES
+fi
+
+echo "Using $UPDATEVM as UpdateVM to download updates for Dom0; this may take some time..." >&2
+
+# qvm-run by default auto-starts the VM if not running
+qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_CACHE_FILES" || exit 1
+qvm-run --nogui -q -u root $UPDATEVM "chown user:user $FWUPD_CACHE_FILES" || exit 1
+
+
+# Use 'script' to fake a terminal, so that we are shown sync and download
+# progress indicators. However, do it only if we are running in terminal
+# ourselves.
+
+FW_UPDATE_SCRIPT="/usr/lib/qubes/fwupd-download-updates.sh"
+if [ "$METADATA" == 1 ]; then
+    FW_UPDATE_SCRIPT_ARGS="--metadata"
+elif [ "$UPDATE" ==1 ]; then
+    FW_UPDATE_SCRIPT_ARGS="--url=$URL --sha=$SHASUM"
+fi
+CMD="script --quiet --return --command '$FW_UPDATE_SCRIPT \
+    $FW_UPDATE_SCRIPT_ARGS' /dev/null"
+qvm-run --nogui --pass-io $UPDATEVM "$CMD"
+
+
+RETCODE=$?
+if [ "$RETCODE" -ne 0 ]; then
+    exit $RETCODE
+fi
+
+# Wait for download completed
+while pidof -x fwupd-receive-updates >/dev/null; do sleep 0.5; done
+
+if [ -r $FWUPD_CACHE_FILES/errors ]; then
+    echo "*** ERROR while receiving fwupd updates:" >&2
+    cat $FWUPD_CACHE_FILES/updates/errors >&2
+    exit 1
+fi
+
+exit 0
