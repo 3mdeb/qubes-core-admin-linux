@@ -24,7 +24,7 @@ find_regex_in_args() {
 }
 
 UPDATEVM=`qubes-prefs --force-root updatevm`
-FWUPD_DOM0_CACHE_FILES=/home/root/.cache/fwupd
+FWUPD_DOM0_CACHE_FILES=/root/.cache/fwupd
 FWUPD_UPDATEVM_CACHE_FILES=/home/user/.cache/fwupd
 
 #if [ -z "$UPDATEVM" ]; then
@@ -50,6 +50,7 @@ METADATA=
 UPDATE=
 URL=
 SHASUM=
+FW_NAME=
 
 # Filter out some dnf options and collect packages list
 while [ $# -gt 0 ]; do
@@ -65,6 +66,7 @@ while [ $# -gt 0 ]; do
             ;;
         --url=*)
             URL=${1#--url=}
+            FW_NAME=${1#https://fwupd.org/downloads/}
             ;;
         --sha=*)
             SHASUM=${1#--sha=}
@@ -83,12 +85,12 @@ if [ $ID != 0 ]; then
     exit 1
 fi
 
-if [ "$UPDATE" == "1" ] && [ -z "$URL" || -z "$SHASUM" ]; then
+if [ "$UPDATE" == "1" ] && [[ -z "$URL" || -z "$SHASUM" ]]; then
     echo "Invalid update url or checksum." >&2
     exit 1
 fi
 
-if [ -z "$UPDATE" && -z "$METADATA" ]; then
+if [[ -z "$UPDATE" && -z "$METADATA" ]]; then
     echo "No option chosen. Exiting..." >&2
     exit 1
 fi
@@ -100,17 +102,19 @@ fi
 rm -f $FWUPD_DOM0_CACHE_FILES/errors
 
 # First time configuration
-if [ -d "$FWUPD_DOM0_CACHE_FILES" ]; then
+echo "$FWUPD_DOM0_CACHE_FILES"
+if [ ! -d "$FWUPD_DOM0_CACHE_FILES" ]; then
+    echo 'done'
     mkdir -p $FWUPD_DOM0_CACHE_FILES/metadata
     mkdir -p $FWUPD_DOM0_CACHE_FILES/updates
-    chown -R user:user $FWUPD_DOM0_CACHE_FILES
 fi
 
 echo "Using $UPDATEVM as UpdateVM to download fwupd updates for Dom0; this may take some time..." >&2
 
 # qvm-run by default auto-starts the VM if not running
-qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_UPDATEVM_CACHE_FILES" || exit 1
-qvm-run --nogui -q -u root $UPDATEVM "chown user:user $FWUPD_UPDATEVM_CACHE_FILES" || exit 1
+qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_UPDATEVM_CACHE_FILES/metadata" || exit 1
+qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_UPDATEVM_CACHE_FILES/updates" || exit 1
+qvm-run --nogui -q -u root $UPDATEVM "chown -R user:user $FWUPD_UPDATEVM_CACHE_FILES" || exit 1
 
 # Use 'script' to fake a terminal, so that we are shown sync and download
 # progress indicators. However, do it only if we are running in terminal
@@ -119,11 +123,13 @@ qvm-run --nogui -q -u root $UPDATEVM "chown user:user $FWUPD_UPDATEVM_CACHE_FILE
 FW_UPDATE_SCRIPT="/usr/lib/qubes/fwupd-download-updates.sh"
 if [ "$METADATA" == 1 ]; then
     FW_UPDATE_SCRIPT_ARGS="--metadata"
+    touch $FWUPD_DOM0_CACHE_FILES/metaflag
 elif [ "$UPDATE" ==1 ]; then
     FW_UPDATE_SCRIPT_ARGS="--url=$URL --sha=$SHASUM"
+    touch $FWUPD_DOM0_CACHE_FILES/updateflag-$FW_NAME
 fi
 CMD="script --quiet --return --command '$FW_UPDATE_SCRIPT \
-    $FW_UPDATE_SCRIPT_ARGS' /dev/null"
+    $FW_UPDATE_SCRIPT_ARGS --clean' /dev/null"
 qvm-run --nogui --pass-io $UPDATEVM "$CMD"
 
 
