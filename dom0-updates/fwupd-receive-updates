@@ -1,0 +1,114 @@
+#!/usr/bin/python3
+#
+# The Qubes OS Project, http://www.qubes-os.org
+#
+# Copyright (C) 2010  Rafal Wojtczuk  <rafal@invisiblethingslab.com>
+#               2020  Norbert Kamiński  <norbert.kaminski@3mdeb.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+#
+import os
+import os.path
+import re
+import sys
+import subprocess
+import shutil
+import grp
+import qubesadmin
+
+fwupd_dir = "~/.cache/fwupd/"
+fwupd_metadata_update_file = fwupd_dir + "firmware.xml.gz"
+fwupd_metadata_update_signature = fwupd_dir + "firmware.xml.gz.asc"
+fwupd_updates_dir = fwupd_dir + "updates/"
+fwupd_error_file = fwupd_dir + "errors"
+
+fwupd_metadata_update_files_regex =
+    re.compile(r"^[A-Za-z0-9._+-]{1,128}\.xml.gz$")
+fwupd_metadata_signature_regex =
+    re.compile(r"^[A-Za-z0-9._+-]{1,128}\.asc$")
+fwupd_firmware_update_files_regex =
+    re.compile(r"^[A-Za-z0-9._+-]{1,128}\.cab$")
+
+# example valid outputs:
+#  .....rpm: rsa sha1 (md5) pgp md5 OK
+#  .....rpm: (sha1) dsa sha1 md5 gpg OK
+#  .....rpm: digests signatures OK
+# example INVALID outputs:
+#  .....rpm: sha1 md5 OK
+#  .....rpm: RSA sha1 ((MD5) PGP) md5 NOT OK (MISSING KEYS: (MD5) PGP#246110c1)
+#  .....rpm: digests OK
+gpg_ok_regex = re.compile(r": [a-z0-9() ]* (pgp|gpg|signatures) [a-z0-9 ]*OK$")
+
+
+def fwupdates_fatal(msg):
+    print(msg, file=sys.stderr)
+    with open(fwupd_error_file, "a") as updates_error_file_handle:
+        updates_error_file_handle.write(msg + "\n")
+    shutil.rmtree(fwupd_updates_dir)
+    exit(1)
+
+def handle_fwupdupdates(updatevm):
+    source = os.getenv("QREXEC_REMOTE_DOMAIN")
+    if source != updatevm.name:
+        print('Domain ' + str(source) + ' not allowed to send dom0 updates',
+            file=sys.stderr)
+        exit(1)
+    if os.path.exists(fwupd_error_file):
+        os.remove(fwupd_error_file)
+    qubes_gid = grp.getgrnam('qubes').gr_gid
+    old_umask = os.umask(0o002)
+    os.mkdir(fwupd_updates_dir)
+    os.chown(fwupd_updates_dir, -1, qubes_gid)
+    os.chmod(fwupd_updates_dir, 0o0775)
+
+    CMD = "/usr/bin/qvm-run --pass-io "
+    CMD += source
+    CMD += " 'cat %s' > " % fwupd_metadata_update_file
+    CMD += fwupd_updates_dir + fwupd_update_file_name
+
+    try:
+        os.system(CMD)
+        # Verify received files
+        for untrusted_f in os.listdir(fwupd_updates_dir):
+            if not fwupd_update_files_regex.match(untrusted_f):
+                raise Exception(
+            'Domain ' + source + ' sent unexpected file')
+        f = untrusted_f
+        assert '/' not in f
+        assert '\0' not in f
+        assert '\x1b' not in f
+
+        full_path = fwupd_updates_dir + "/" + f
+        if os.path.islink(full_path) or not os.path.isfile(full_path):
+                raise Exception(
+                    'Domain ' + source + ' sent not regular file')
+        # TO DO fwupd update files verification
+        print("FILE NOT VERIFIED!!!")
+    except Exception as e:
+        fwupdates_fatal(str(e))
+    os.umask(old_umask)
+    exit(0)
+
+def main():
+    app = qubesadmin.Qubes()
+
+    updatevm = app.updatevm
+    if updatevm is None:
+        exit(1)
+    handle_fwupdupdates(updatevm)
+
+
+if __name__ == '__main__':
+    main()

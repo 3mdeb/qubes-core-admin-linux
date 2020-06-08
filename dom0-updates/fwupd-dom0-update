@@ -24,7 +24,8 @@ find_regex_in_args() {
 }
 
 UPDATEVM=`qubes-prefs --force-root updatevm`
-FWUPD_CACHE_FILES=/home/root/.cache/fwupd
+FWUPD_DOM0_CACHE_FILES=/home/root/.cache/fwupd
+FWUPD_UPDATEVM_CACHE_FILES=/home/user/.cache/fwupd
 
 #if [ -z "$UPDATEVM" ]; then
 #    echo "UpdateVM not set, exiting"
@@ -70,6 +71,7 @@ while [ $# -gt 0 ]; do
             ;;
         *)
             echo "Command unknown"
+            exit 1
             ;;
     esac
     shift
@@ -92,24 +94,23 @@ if [ -z "$UPDATE" && -z "$METADATA" ]; then
 fi
 
 if [ -n "$CLEAN" ]; then
-    rm -f $FWUPD_CACHE_FILES/metadata/*
-    rm -f $FWUPD_CACHE_FILES/updates/*
+    rm -f $FWUPD_DOM0_CACHE_FILES/metadata/*
+    rm -f $FWUPD_DOM0_CACHE_FILES/updates/*
 fi
-rm -f $FWUPD_CACHE_FILES/errors
+rm -f $FWUPD_DOM0_CACHE_FILES/errors
 
 # First time configuration
-if [ -d "$FWUPD_CACHE_FILES" ]; then
-    mkdir -p $FWUPD_CACHE_FILES/metadata
-    mkdir -p $FWUPD_CACHE_FILES/updates
-    chown -R user:user $FWUPD_CACHE_FILES
+if [ -d "$FWUPD_DOM0_CACHE_FILES" ]; then
+    mkdir -p $FWUPD_DOM0_CACHE_FILES/metadata
+    mkdir -p $FWUPD_DOM0_CACHE_FILES/updates
+    chown -R user:user $FWUPD_DOM0_CACHE_FILES
 fi
 
-echo "Using $UPDATEVM as UpdateVM to download updates for Dom0; this may take some time..." >&2
+echo "Using $UPDATEVM as UpdateVM to download fwupd updates for Dom0; this may take some time..." >&2
 
 # qvm-run by default auto-starts the VM if not running
-qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_CACHE_FILES" || exit 1
-qvm-run --nogui -q -u root $UPDATEVM "chown user:user $FWUPD_CACHE_FILES" || exit 1
-
+qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_UPDATEVM_CACHE_FILES" || exit 1
+qvm-run --nogui -q -u root $UPDATEVM "chown user:user $FWUPD_UPDATEVM_CACHE_FILES" || exit 1
 
 # Use 'script' to fake a terminal, so that we are shown sync and download
 # progress indicators. However, do it only if we are running in terminal
@@ -134,9 +135,9 @@ fi
 # Wait for download completed
 while pidof -x fwupd-receive-updates >/dev/null; do sleep 0.5; done
 
-if [ -r $FWUPD_CACHE_FILES/errors ]; then
+if [ -r $FWUPD_DOM0_CACHE_FILES/errors ]; then
     echo "*** ERROR while receiving fwupd updates:" >&2
-    cat $FWUPD_CACHE_FILES/updates/errors >&2
+    cat $FWUPD_DOM0_CACHE_FILES/updates/errors >&2
     exit 1
 fi
 
