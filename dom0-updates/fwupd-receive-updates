@@ -33,6 +33,7 @@ FWUPD_DOM0_METADATA_DIR = FWUPD_DOM0_DIR + "metadata/"
 FWUPD_DOM0_METADATA_SIGNATURE = FWUPD_DOM0_METADATA_DIR + "firmware.xml.gz.asc"
 FWUPD_DOM0_METADATA_FILE = FWUPD_DOM0_METADATA_DIR + "firmware.xml.gz"
 FWUPD_DOM0_UPDATES_DIR = FWUPD_DOM0_DIR + "updates/"
+FWUPD_DOM0_UNTRUSTED_DIR = FWUPD_DOM0_UPDATES_DIR + "untrusted/"
 FWUPD_ERROR_FILE = FWUPD_DOM0_DIR + "errors"
 FWUPD_UPDATEVM_DIR = "/home/user/.cache/fwupd/"
 FWUPD_UPDATEVM_METADATA_DIR = FWUPD_UPDATEVM_DIR + "metadata/"
@@ -41,21 +42,10 @@ FWUPD_UPDATEVM_METADATA_SIGNATURE = FWUPD_UPDATEVM_METADATA_DIR + \
 FWUPD_UPDATEVM_METADATA_FILE = FWUPD_UPDATEVM_METADATA_DIR + "firmware.xml.gz"
 FWUPD_UPDATEVM_UPDATES_DIR = FWUPD_UPDATEVM_DIR + "updates/"
 
-FWUPD_METADATA_FILES_REGEX = re.compile(
-    r"^[A-Za-z0-9._+-]{1,128}\.xml\.gz$"
-    )
-FWUPD_METADATA_SIGNATURE_REGEX = re.compile(
-    r"^[A-Za-z0-9._+-]{1,128}\.asc$"
-    )
-FWUPD_FIRMWARE_FILE_REGEX = re.compile(
-    r"^[A-Za-z0-9._+-]{1,128}\.cab$"
-    )
-FWUPD_FIRMWARE_FLAG_REGEX = re.compile(
-    r"^updateflag-[A-Za-z0-9]{1,128}.cab"
-)
-FWUPD_METADATA_FLAG_REGEX = re.compile(
-    r"^metaflag"
-)
+FWUPD_METADATA_FILES_REGEX = re.compile(r"^[A-Za-z0-9._+-]{1,128}\.xml\.gz$")
+FWUPD_METADATA_SIGNATURE_REGEX = re.compile(r"^[A-Za-z0-9._+-]{1,128}\.asc$")
+FWUPD_FIRMWARE_FLAG_REGEX = re.compile(r"^updateflag-[A-Za-z0-9]{1,128}\.cab")
+FWUPD_METADATA_FLAG_REGEX = re.compile(r"^metaflag")
 
 # example valid outputs:
 #  .....rpm: rsa sha1 (md5) pgp md5 OK
@@ -77,11 +67,15 @@ def fwupdates_fatal(msg):
     exit(1)
 
 
-def handle_fw_update(updatevm, filename):
+def handle_fw_update(updatevm, shasum, filename):
+    sha_ok_regex = re.compile("%s: OK$" % filename)
+    fwupd_firmware_file_regex = re.compile(filename)
     source = os.getenv("QREXEC_REMOTE_DOMAIN")
     if source != updatevm.name:
-        print('Domain ' + str(source) + ' not allowed to send dom0 updates',
-              file=sys.stderr)
+        print(
+              'Domain ' + str(source) + ' not allowed to send dom0 updates',
+              file=sys.stderr
+              )
         exit(1)
     if os.path.exists(FWUPD_ERROR_FILE):
         os.remove(FWUPD_ERROR_FILE)
@@ -90,30 +84,76 @@ def handle_fw_update(updatevm, filename):
     os.mkdir(FWUPD_DOM0_UPDATES_DIR)
     os.chown(FWUPD_DOM0_UPDATES_DIR, -1, qubes_gid)
     os.chmod(FWUPD_DOM0_UPDATES_DIR, 0o0775)
+    os.mkdir(FWUPD_DOM0_UNTRUSTED_DIR)
+    os.chown(FWUPD_DOM0_UNTRUSTED_DIR, -1, qubes_gid)
+    os.chmod(FWUPD_DOM0_UNTRUSTED_DIR, 0o0775)
 
-    CMD = "/usr/bin/qvm-run --pass-io "
-    CMD += source
-    CMD += " 'cat %s' > " % fwupd_metadata_update_file
-    CMD += FWUPD_UPDATES_DIR + fwupd_update_file_name
+    dom0_firmware_untrusted_path = FWUPD_DOM0_UNTRUSTED_DIR + filename
+    updatevm_firmware_file_path = FWUPD_UPDATEVM_UPDATES_DIR + filename
+    cmd = "/usr/bin/qvm-run --pass-io "
+    cmd += source
+    cmd += " 'cat %s' > " % updatevm_firmware_file_path
+    cmd += dom0_firmware_untrusted_path
 
     try:
-        os.system(CMD)
+        os.system(cmd)
         # Verify received files
-        for untrusted_f in os.listdir(FWUPD_UPDATES_DIR):
-            if not fwupd_update_files_regex.match(untrusted_f):
+        for untrusted_f in os.listdir(FWUPD_DOM0_UNTRUSTED_DIR):
+            if not fwupd_firmware_file_regex.match(untrusted_f):
+                raise Exception('Domain ' + source + ' sent unexpected file')
+            f = untrusted_f
+            assert '/' not in f
+            assert '\0' not in f
+            assert '\x1b' not in f
+            archive_path = FWUPD_DOM0_UNTRUSTED_DIR + "/" + f
+            if os.path.islink(archive_path) or not os.path.isfile(archive_path):
+                raise Exception('Domain ' + source + ' sent not regular file')
+            # Check shasum
+            cmd_checksum = [
+                            "sha1sum",
+                            "-c",
+                            "%s" % shasum
+                           ]
+            p = subprocess.Popen(cmd_checksum, stdout=subprocess.PIPE)
+            output = p.communicate()[0].decode('ascii')
+            if p.returncode != 0:
                 raise Exception(
-                                'Domain ' + source + ' sent unexpected file')
-        f = untrusted_f
-        assert '/' not in f
-        assert '\0' not in f
-        assert '\x1b' not in f
-
-        full_path = FWUPD_UPDATES_DIR + "/" + f
-        if os.path.islink(full_path) or not os.path.isfile(full_path):
-            raise Exception(
-                            'Domain ' + source + ' sent not regular file')
-        # TO DO fwupd update files verification
-        print("FILE NOT VERIFIED!!!")
+                    'Error while verifing %s signature: %s' % (f, output)
+                    )
+            if not sha_ok_regex.search(output.strip()):
+                raise Exception(
+                    'Computed checksum did NOT match archive: %s' % output
+                    )
+            # Extract archive
+            full_path = FWUPD_DOM0_UNTRUSTED_DIR + filename[:-4]
+            cmd_extract = [
+                            "cabextract",
+                            "-d",
+                            "%s" % full_path,
+                            "%s" % archive_path
+                          ]
+            p = subprocess.Popen(cmd_extract, stdout=subprocess.PIPE)
+            output = p.communicate()[0].decode('ascii')
+            if p.returncode != 0:
+                raise Exception(
+                    'Error while extracting %s archive: %s' % (f, output)
+                    )
+            # Verify signature
+            cmd_gpg = [
+                        "gpg",
+                        "--verify",
+                        "%s/firmware*.asc" % full_path,
+                        "%s/firmware*" % full_path,
+                      ]
+            p = subprocess.Popen(cmd_gpg, stdout=subprocess.PIPE)
+            output = p.communicate()[0].decode('ascii')
+            if p.returncode != 0:
+                raise Exception(
+                    'Error while extracting %s archive: %s' % (f, output)
+                    )
+            if not GPG_OK_REGEX.search(output.strip()):
+                raise Exception(
+                    'Domain ' + source + ' sent not signed firmware: ' + f)
     except Exception as e:
         fwupdates_fatal(str(e))
     os.umask(old_umask)
@@ -168,7 +208,7 @@ def main():
         if updatevm is None:
             exit(1)
         flag = [
-                f for f in os.listdir(FWUPD_DIR)
+                f for f in os.listdir(FWUPD_DOM0_DIR)
                 if FWUPD_FIRMWARE_FLAG_REGEX.match(f) or
                 FWUPD_METADATA_FLAG_REGEX.match(f)
                 ]
@@ -179,7 +219,7 @@ def main():
         elif FWUPD_METADATA_FLAG_REGEX.match(flag[0]):
             handle_metadata_update(updatevm)
         elif FWUPD_FIRMWARE_FLAG_REGEX.match(flag[0]):
-            handle_fw_update(updatevm, flag[0][11:])
+            handle_fw_update(updatevm, flag[0], flag[0][10:])
     except Exception as e:
         fwupdates_fatal(str(e))
 
