@@ -62,11 +62,11 @@ while [ $# -gt 0 ]; do
             METADATA=1
             ;;
         --update)
-            METADATA=1
+            UPDATE=1
             ;;
         --url=*)
             URL=${1#--url=}
-            FW_NAME=${1#https://fwupd.org/downloads/}
+            FW_NAME=${1#--url=https://fwupd.org/downloads/}
             ;;
         --sha=*)
             SHASUM=${1#--sha=}
@@ -99,15 +99,12 @@ if [ -n "$CLEAN" ]; then
     rm -f $FWUPD_DOM0_CACHE_FILES/metadata/*
     rm -f $FWUPD_DOM0_CACHE_FILES/updates/*
 fi
-rm -f $FWUPD_DOM0_CACHE_FILES/errors
 
-# First time configuration
-echo "$FWUPD_DOM0_CACHE_FILES"
-if [ ! -d "$FWUPD_DOM0_CACHE_FILES" ]; then
-    echo 'done'
-    mkdir -p $FWUPD_DOM0_CACHE_FILES/metadata
-    mkdir -p $FWUPD_DOM0_CACHE_FILES/updates
-fi
+# Clean flags and set ownership
+rm -f $FWUPD_DOM0_CACHE_FILES/errors
+rm -f $FWUPD_DOM0_CACHE_FILES/metaflag
+rm -f $FWUPD_DOM0_CACHE_FILES/updateflag-*
+chown -R root:qubes $FWUPD_DOM0_CACHE_FILES
 
 echo "Using $UPDATEVM as UpdateVM to download fwupd updates for Dom0; this may take some time..." >&2
 
@@ -116,18 +113,19 @@ qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_UPDATEVM_CACHE_FILE
 qvm-run --nogui -q -u root $UPDATEVM "mkdir -m 775 -p $FWUPD_UPDATEVM_CACHE_FILES/updates" || exit 1
 qvm-run --nogui -q -u root $UPDATEVM "chown -R user:user $FWUPD_UPDATEVM_CACHE_FILES" || exit 1
 
-# Use 'script' to fake a terminal, so that we are shown sync and download
-# progress indicators. However, do it only if we are running in terminal
-# ourselves.
-
+# Setup fwupd-download-updates comandline
 FW_UPDATE_SCRIPT="/usr/lib/qubes/fwupd-download-updates.sh"
 if [ "$METADATA" == 1 ]; then
     FW_UPDATE_SCRIPT_ARGS="--metadata"
     touch $FWUPD_DOM0_CACHE_FILES/metaflag
-elif [ "$UPDATE" ==1 ]; then
+elif [ "$UPDATE" == 1 ]; then
     FW_UPDATE_SCRIPT_ARGS="--url=$URL --sha=$SHASUM"
     touch $FWUPD_DOM0_CACHE_FILES/updateflag-$FW_NAME
 fi
+
+# Use 'script' to fake a terminal, so that we are shown sync and download
+# progress indicators. However, do it only if we are running in terminal
+# ourselves.
 CMD="script --quiet --return --command '$FW_UPDATE_SCRIPT \
     $FW_UPDATE_SCRIPT_ARGS --clean' /dev/null"
 qvm-run --nogui --pass-io $UPDATEVM "$CMD"
