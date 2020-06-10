@@ -120,7 +120,8 @@ if [ "$METADATA" == 1 ]; then
     touch $FWUPD_DOM0_CACHE_FILES/metaflag
 elif [ "$UPDATE" == 1 ]; then
     FW_UPDATE_SCRIPT_ARGS="--url=$URL --sha=$SHASUM"
-    touch $FWUPD_DOM0_CACHE_FILES/updateflag-$FW_NAME
+    echo "$FWUPD_DOM0_CACHE_FILES/updates/$FW_NAME  $SHASUM" > \
+        $FWUPD_DOM0_CACHE_FILES/updateflag-$FW_NAME
 fi
 
 # Use 'script' to fake a terminal, so that we are shown sync and download
