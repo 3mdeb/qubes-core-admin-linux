@@ -96,12 +96,11 @@ if [[ -z "$UPDATE" && -z "$METADATA" ]]; then
 fi
 
 if [ -n "$CLEAN" ]; then
-    rm -f $FWUPD_DOM0_CACHE_FILES/metadata/*
-    rm -f $FWUPD_DOM0_CACHE_FILES/updates/*
+    rm -rf $FWUPD_DOM0_CACHE_FILES/metadata
+    rm -rf $FWUPD_DOM0_CACHE_FILES/updates
 fi
 
 # Clean flags and set ownership
-rm -f $FWUPD_DOM0_CACHE_FILES/errors
 rm -f $FWUPD_DOM0_CACHE_FILES/metaflag
 rm -f $FWUPD_DOM0_CACHE_FILES/updateflag-*
 chown -R root:qubes $FWUPD_DOM0_CACHE_FILES
@@ -116,12 +115,12 @@ qvm-run --nogui -q -u root $UPDATEVM "chown -R user:user $FWUPD_UPDATEVM_CACHE_F
 # Setup fwupd-download-updates comandline
 FW_UPDATE_SCRIPT="/usr/lib/qubes/fwupd-download-updates.sh"
 if [ "$METADATA" == 1 ]; then
+    rm -rf $FWUPD_DOM0_CACHE_FILES/metadata
     FW_UPDATE_SCRIPT_ARGS="--metadata"
-    touch $FWUPD_DOM0_CACHE_FILES/metaflag
+    FW_RECIVE_ARGS="metadata"
 elif [ "$UPDATE" == 1 ]; then
     FW_UPDATE_SCRIPT_ARGS="--url=$URL --sha=$SHASUM"
-    echo "$FWUPD_DOM0_CACHE_FILES/updates/$FW_NAME  $SHASUM" > \
-        $FWUPD_DOM0_CACHE_FILES/updateflag-$FW_NAME
+    FW_RECIVE_ARGS="update $SHASUM $FW_NAME"
 fi
 
 # Use 'script' to fake a terminal, so that we are shown sync and download
@@ -131,18 +130,18 @@ CMD="script --quiet --return --command '$FW_UPDATE_SCRIPT \
     $FW_UPDATE_SCRIPT_ARGS --clean' /dev/null"
 qvm-run --nogui --pass-io $UPDATEVM "$CMD"
 
-
 RETCODE=$?
 if [ "$RETCODE" -ne 0 ]; then
     exit $RETCODE
 fi
 
 # Wait for download completed
-while pidof -x fwupd-receive-updates >/dev/null; do sleep 0.5; done
+/usr/libexec/qubes/./fwupd-receive-updates $UPDATEVM $FW_RECIVE_ARGS
 
-if [ -r $FWUPD_DOM0_CACHE_FILES/errors ]; then
-    echo "*** ERROR while receiving fwupd updates:" >&2
-    cat $FWUPD_DOM0_CACHE_FILES/updates/errors >&2
+if [ "$?" -ne 0 ]; then
+    echo "*** ERROR while receiving fwupd updates"
+    rm -rf $FWUPD_DOM0_CACHE_FILES/metadata
+    rm -rf $FWUPD_DOM0_CACHE_FILES/updates
     exit 1
 fi
 
