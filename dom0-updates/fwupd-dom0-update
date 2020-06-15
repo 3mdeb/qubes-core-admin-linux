@@ -85,6 +85,12 @@ if [ $ID != 0 ]; then
     exit 1
 fi
 
+if [ -n "$CLEAN" ]; then
+    echo "Cleaning directories."
+    rm -rf $FWUPD_DOM0_CACHE_FILES/metadata
+    rm -rf $FWUPD_DOM0_CACHE_FILES/updates
+fi
+
 if [ "$UPDATE" == "1" ] && [[ -z "$URL" || -z "$SHASUM" ]]; then
     echo "Invalid update url or checksum." >&2
     exit 1
@@ -95,14 +101,7 @@ if [[ -z "$UPDATE" && -z "$METADATA" ]]; then
     exit 1
 fi
 
-if [ -n "$CLEAN" ]; then
-    rm -rf $FWUPD_DOM0_CACHE_FILES/metadata
-    rm -rf $FWUPD_DOM0_CACHE_FILES/updates
-fi
-
-# Clean flags and set ownership
-rm -f $FWUPD_DOM0_CACHE_FILES/metaflag
-rm -f $FWUPD_DOM0_CACHE_FILES/updateflag-*
+# Set ownership
 chown -R root:qubes $FWUPD_DOM0_CACHE_FILES
 
 echo "Using $UPDATEVM as UpdateVM to download fwupd updates for Dom0; this may take some time..." >&2
@@ -119,15 +118,21 @@ if [ "$METADATA" == 1 ]; then
     FW_UPDATE_SCRIPT_ARGS="--metadata"
     FW_RECIVE_ARGS="metadata"
 elif [ "$UPDATE" == 1 ]; then
-    FW_UPDATE_SCRIPT_ARGS="--url=$URL --sha=$SHASUM"
-    FW_RECIVE_ARGS="update $SHASUM $FW_NAME"
+    FW_DIR=$FWUPD_DOM0_CACHE_FILES/updates/$FW_NAME
+    if [ -d "${FW_DIR::-4}" ]; then
+        echo "Firmware already downloaded. Using cached files." >&2
+        exit 0
+    else
+        FW_UPDATE_SCRIPT_ARGS="--url=$URL --sha=$SHASUM"
+        FW_RECIVE_ARGS="update $SHASUM $FW_NAME"
+    fi
 fi
 
 # Use 'script' to fake a terminal, so that we are shown sync and download
 # progress indicators. However, do it only if we are running in terminal
 # ourselves.
 CMD="script --quiet --return --command '$FW_UPDATE_SCRIPT \
-    $FW_UPDATE_SCRIPT_ARGS --clean' /dev/null"
+    $FW_UPDATE_SCRIPT_ARGS' /dev/null"
 qvm-run --nogui --pass-io $UPDATEVM "$CMD"
 
 RETCODE=$?

@@ -19,13 +19,15 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
 #
+import glob
+import grp
+import hashlib
 import os
 import os.path as path
 import re
+import shutil
 import sys
 import subprocess
-import grp
-import hashlib
 
 FWUPD_DOM0_DIR = "/root/.cache/fwupd/"
 FWUPD_DOM0_METADATA_DIR = FWUPD_DOM0_DIR + "metadata/"
@@ -44,7 +46,9 @@ FWUPD_UPDATEVM_UPDATES_DIR = FWUPD_UPDATEVM_DIR + "updates/"
 FWUPD_METADATA_FILES_REGEX = re.compile(r"^firmware.xml.gz.?a?s?c?$")
 FWUPD_FIRMWARE_FLAG_REGEX = re.compile(r"^updateflag-[A-Za-z0-9]{1,128}\.cab")
 FWUPD_METADATA_FLAG_REGEX = re.compile(r"^metaflag")
-GPG_LVFS_REGEX = re.compile(r"gpg: Good signature from [a-z0-9\[\]\@\<\>\.\"\"]{1,128}")
+GPG_LVFS_REGEX = re.compile(
+    r"gpg: Good signature from [a-z0-9\[\]\@\<\>\.\"\"]{1,128}"
+    )
 
 
 class FwupdReceiveUpdates:
@@ -52,7 +56,7 @@ class FwupdReceiveUpdates:
         # Count sha1 checksum
         with open(file_path, 'rb') as f:
             c_sha = hashlib.sha1(f.read()).hexdigest()
-        if c_sha is not sha:
+        if c_sha != sha:
             raise ValueError(
                             "Computed checksum %s did NOT match %s. " %
                             (c_sha, sha)
@@ -60,7 +64,9 @@ class FwupdReceiveUpdates:
 
     def check_domain(self, updatevm):
         # Check if updateVM is allowed to provide update files
-        self.source = os.getenv("QREXEC_REMOTE_DOMAIN")
+        cmd = ['qubes-prefs', '--force-root', 'updatevm']
+        p = subprocess.check_output(cmd)
+        self.source = p.decode('ascii').rstrip()
         if self.source != updatevm:
             print(
                 'Domain ' +
@@ -125,11 +131,13 @@ class FwupdReceiveUpdates:
                     "%s.asc" % file_path,
                     "%s" % file_path,
                   ]
-        p = subprocess.Popen(cmd_gpg, stdout=subprocess.PIPE)
-        output = p.communicate()[0].decode('ascii')
+        p = subprocess.Popen(cmd_gpg,stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output, stderr = p.communicate()
+        verification = stderr.decode('ascii')
+        print(verification)
         if p.returncode != 0:
             raise Exception('gpg: Verification failed')
-        if not GPG_LVFS_REGEX.search(output.strip()):
+        if not GPG_LVFS_REGEX.search(verification.strip()):
             raise Exception(
                             'Domain updateVM sent not signed firmware: ' +
                             file_path
@@ -157,9 +165,11 @@ class FwupdReceiveUpdates:
         self.check_shasum(dom0_firmware_untrusted_path, shasum)
         output_path = FWUPD_DOM0_UNTRUSTED_DIR + filename[:-4]
         self.extract_archive(dom0_firmware_untrusted_path, output_path)
-        file_path = output_path + "firmware*"
-        self.gpg_verification(file_path)
+        file_path = glob.glob(output_path+"/firmware*.asc")
+        self.gpg_verification(file_path[0][:-4])
         os.umask(self.old_umask)
+        shutil.move(output_path, FWUPD_DOM0_UPDATES_DIR + filename[:-4])
+        shutil.rmtree(FWUPD_DOM0_UNTRUSTED_DIR)
         exit(0)
 
     def handle_metadata_update(self, updatevm):
@@ -189,7 +199,6 @@ class FwupdReceiveUpdates:
 def main():
     updatevm = sys.argv[1]
     fwupd = FwupdReceiveUpdates()
-    print(updatevm)
     if updatevm is None:
         exit(1)
     if sys.argv[2] is None:
